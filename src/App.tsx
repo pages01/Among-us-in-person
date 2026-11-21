@@ -169,9 +169,10 @@ export default function App() {
   }, [loadProfile, roomCode]);
 
   useEffect(() => {
-    if (!game?.id || !supabase || !userId) return;
+    const client = supabase;
+    if (!game?.id || !client || !userId) return;
     const refresh = () => refreshGame(game.id).catch((e) => setError(messageOf(e)));
-    const channel = supabase.channel("game-live-" + game.id)
+    const channel = client.channel("game-live-" + game.id)
       .on("postgres_changes", { event: "*", schema: "public", table: "games", filter: "id=eq." + game.id }, refresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "game_players", filter: "game_id=eq." + game.id }, refresh)
       .on("postgres_changes", { event: "*", schema: "public", table: "game_events", filter: "game_id=eq." + game.id }, refresh)
@@ -179,7 +180,7 @@ export default function App() {
       .on("postgres_changes", { event: "*", schema: "public", table: "game_votes", filter: "voter_id=eq." + userId }, refresh)
       .subscribe();
     refresh();
-    return () => { supabase.removeChannel(channel); };
+    return () => { client.removeChannel(channel); };
   }, [game?.id, userId, refreshGame]);
 
   useEffect(() => {
