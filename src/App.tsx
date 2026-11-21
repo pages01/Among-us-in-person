@@ -265,10 +265,10 @@ export default function App() {
     setBusy(true);
     setError("");
     try {
-      const joined = await gameAction<{ game_id: string }>("join_game", { room_code: cleanCode, color });
+      const joined = await gameAction<{ game_id: string; status: string }>("join_game", { room_code: cleanCode, color });
       await refreshGame(joined.game_id);
-      setScreen("lobby");
-      notify("You're in. Make sure everyone is ready.");
+      setScreen(joined.status === "lobby" ? "lobby" : "game");
+      notify(joined.status === "lobby" ? "You're in. Make sure everyone is ready." : "Reconnected to your live game.");
       window.history.replaceState({}, "", window.location.pathname);
     } catch (e) {
       setError(messageOf(e));
@@ -285,6 +285,7 @@ export default function App() {
       await gameAction(action, { game_id: game.id, ...payload });
       await refreshGame(game.id);
       await loadProfile();
+      if (action === "start_game") setScreen("game");
       if (success) notify(success);
     } catch (e) {
       setError(messageOf(e));
