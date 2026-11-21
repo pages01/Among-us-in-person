@@ -225,3 +225,128 @@ begin
   end if;
 end;
 $$;
+
+
+-- Atomic task completion and cosmetic purchases prevent double rewards and negative balances.
+create or replace function public.complete_task_and_reward(
+  target_game uuid,
+  target_user uuid,
+  target_task uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_game public.games%rowtype;
+  v_player public.game_players%rowtype;
+  v_secret public.game_private_state%rowtype;
+  v_task jsonb;
+  v_task_index integer;
+  v_reward integer;
+begin
+  select * into v_game from public.games where id = target_game;
+  if not found or v_game.status <> 'active' or v_game.phase <> 'active' then
+    raise exception 'Tasks can only be completed during an active round.';
+  end if;
+
+  select * into v_player
+  from public.game_players
+  where game_id = target_game and user_id = target_user
+  for update;
+  if not found or not v_player.is_alive then
+    raise exception 'You are not an active living player in this room.';
+  end if;
+
+  select * into v_secret
+  from public.game_private_state
+  where game_id = target_game and user_id = target_user
+  for update;
+  if not found or v_secret.team <> 'Crew' then
+    raise exception 'Only living crew players can complete crew tasks.';
+  end if;
+
+  select (task_row.ordinality - 1)::integer, task_row.value
+  into v_task_index, v_task
+  from jsonb_array_elements(v_secret.tasks) with ordinality as task_row(value, ordinality)
+  where task_row.value->>'id' = target_task::text
+  limit 1;
+  if v_task_index is null then
+    raise exception 'That task is not assigned to you.';
+  end if;
+  if coalesce((v_task->>'completed')::boolean, false) then
+    raise exception 'That task has already been completed.';
+  end if;
+
+  v_reward := greatest(0, least(50, coalesce((v_task->>'points')::integer, 5)));
+  update public.game_private_state
+  set tasks = jsonb_set(
+    jsonb_set(v_secret.tasks, array[v_task_index::text, 'completed'], 'true'::jsonb, false),
+    array[v_task_index::text, 'completed_at'],
+    to_jsonb(now()::text),
+    true
+  )
+  where game_id = target_game and user_id = target_user;
+
+  update public.profiles
+  set points = points + v_reward,
+      tasks_completed = tasks_completed + 1,
+      updated_at = now()
+  where id = target_user;
+
+  return jsonb_build_object('ok', true, 'reward', v_reward);
+end;
+$$;
+
+create or replace function public.purchase_cosmetic(
+  target_user uuid,
+  target_cosmetic text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_profile public.profiles%rowtype;
+  v_price integer;
+begin
+  v_price := case target_cosmetic
+    when 'classic' then 0
+    when 'arctic' then 80
+    when 'nebula' then 140
+    when 'solar' then 200
+    when 'mint' then 260
+    when 'stealth' then 400
+    else null
+  end;
+  if v_price is null then
+    raise exception 'That cosmetic is not available.';
+  end if;
+
+  select * into v_profile from public.profiles where id = target_user for update;
+  if not found then
+    raise exception 'Player profile not found.';
+  end if;
+  if target_cosmetic = any(v_profile.owned_cosmetics) then
+    raise exception 'You already own this cosmetic.';
+  end if;
+  if v_profile.points < v_price then
+    raise exception 'You do not have enough points.';
+  end if;
+
+  update public.profiles
+  set points = points - v_price,
+      owned_cosmetics = array_append(owned_cosmetics, target_cosmetic),
+      updated_at = now()
+  where id = target_user;
+
+  return jsonb_build_object('ok', true, 'price', v_price);
+end;
+$$;
+
+revoke all on function public.complete_task_and_reward(uuid, uuid, uuid) from public, anon, authenticated;
+revoke all on function public.purchase_cosmetic(uuid, text) from public, anon, authenticated;
+grant execute on function public.complete_task_and_reward(uuid, uuid, uuid) to service_role;
+grant execute on function public.purchase_cosmetic(uuid, text) to service_role;
