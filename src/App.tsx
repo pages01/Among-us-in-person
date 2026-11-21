@@ -85,6 +85,7 @@ export default function App() {
   const [color, setColor] = useState(COLORS[0].value);
   const [voteTarget, setVoteTarget] = useState("");
   const [voteLocked, setVoteLocked] = useState(false);
+  const [voteConfirm, setVoteConfirm] = useState(false);
   const [voteStatus, setVoteStatus] = useState({ submitted: 0, total: 0 });
   const [tab, setTab] = useState<"overview" | "tasks" | "players">("overview");
   const [hostTools, setHostTools] = useState(false);
@@ -325,12 +326,18 @@ export default function App() {
     }
   }
 
+  function selectVote(target: string) {
+    setVoteTarget(target);
+    setVoteConfirm(false);
+  }
+
   async function castVote() {
     if (!game || !voteTarget) return;
     setBusy(true);
     try {
       await gameAction("cast_vote", { game_id: game.id, target_id: voteTarget, locked: true });
       setVoteLocked(true);
+      setVoteConfirm(false);
       const status = await gameAction<{ submitted: number; total: number }>("vote_status", { game_id: game.id });
       setVoteStatus(status);
       await refreshGame(game.id);
@@ -511,9 +518,13 @@ export default function App() {
                         </>
                       )}
                       {game.phase === "discussion" && <Panel className="meeting-panel"><div className="meeting-symbol"><MessageCircle size={26} /></div><span className="eyebrow">MEETING CALLED</span><h2>Time to talk.</h2><p>{game.meeting_initiator || "A player"} called a meeting. Share what you saw and listen closely.</p><div className="meeting-timer">{remaining === null ? "—" : formatClock(remaining)}</div>{isHost ? <button className="primary-button full-button" onClick={() => runAction("start_voting", {}, "Voting is now open.")}>Start voting <Vote size={17} /></button> : <div className="wait-chip"><Clock3 size={15} /> Waiting for the host to start voting</div>}</Panel>}
-                      {game.phase === "voting" && <Panel className="voting-panel"><div className="meeting-symbol vote-symbol"><Vote size={26} /></div><span className="eyebrow">CAST YOUR VOTE</span><h2>Who seems suspicious?</h2><p>Your vote stays private until voting closes.</p><div className="vote-options">{players.filter(p => p.is_alive).map(p => <button key={p.id} className={"vote-option " + (voteTarget === p.user_id ? "vote-selected" : "")} onClick={() => setVoteTarget(p.user_id)} disabled={voteLocked || p.user_id === userId}><CrewBadge color={p.color} size="sm" /><span>{p.player_name}{p.user_id === userId ? " (you)" : ""}</span>{voteTarget === p.user_id && <CheckCircle2 size={16} />}</button>)}{game.settings.allowSkip && <button className={"vote-option skip-option " + (voteTarget === "skip" ? "vote-selected" : "")} onClick={() => setVoteTarget("skip")} disabled={voteLocked}><span className="skip-mark">Ⅱ</span><span>Skip vote</span>{voteTarget === "skip" && <CheckCircle2 size={16} />}</button>}</div>{!voteLocked && me?.is_alive ? <button className="primary-button full-button" onClick={castVote} disabled={busy || !voteTarget}>Lock in vote <Check size={17} /></button> : <div className="wait-chip"><CheckCircle2 size={15} /> Vote locked · {voteStatus.submitted} of {voteStatus.total} submitted</div>}{isHost && <button className="secondary-button full-button" onClick={() => runAction("resolve_vote", {}, "Votes counted.")}>Close voting & count votes</button>}</Panel>}
+                      {game.phase === "voting" && <Panel className="voting-panel"><div className="meeting-symbol vote-symbol"><Vote size={26} /></div><span className="eyebrow">CAST YOUR VOTE</span><h2>Who seems suspicious?</h2><p>Your vote stays private until voting closes.</p><div className="vote-options">{players.filter(p => p.is_alive).map(p => <button key={p.id} className={"vote-option " + (voteTarget === p.user_id ? "vote-selected" : "")} onClick={() => selectVote(p.user_id)} disabled={voteLocked || p.user_id === userId}><CrewBadge color={p.color} size="sm" /><span>{p.player_name}{p.user_id === userId ? " (you)" : ""}</span>{voteTarget === p.user_id && <CheckCircle2 size={16} />}</button>)}{game.settings.allowSkip && <button className={"vote-option skip-option " + (voteTarget === "skip" ? "vote-selected" : "")} onClick={() => selectVote("skip")} disabled={voteLocked}><span className="skip-mark">Ⅱ</span><span>Skip vote</span>{voteTarget === "skip" && <CheckCircle2 size={16} />}</button>}</div>{!voteLocked && me?.is_alive ? <div className="vote-confirm-line">{voteConfirm ? <><strong>{voteTarget === "skip" ? "Skip vote" : "Your selection: " + (players.find(p => p.user_id === voteTarget)?.player_name || "selected player")}</strong><button className="text-button" onClick={() => setVoteConfirm(false)}>Change</button></> : <span>Choose a player, then review your selection.</span>}</div><button className="primary-button full-button" onClick={() => voteConfirm ? castVote() : setVoteConfirm(true)} disabled={busy || !voteTarget}>{voteConfirm ? <>Confirm & lock vote <Check size={17} /></> : <>Review vote <ArrowRight size={17} /></>}</button> : <div className="wait-chip"><CheckCircle2 size={15} /> Vote locked · {voteStatus.submitted} of {voteStatus.total} submitted</div>}{isHost && <button className="secondary-button full-button" onClick={() => runAction("resolve_vote", {}, "Votes counted.")}>Close voting & count votes</button>}</Panel>}
                       {hostTools && isHost && <Panel className="host-tools"><div className="panel-head"><div><span className="eyebrow">HOST CONTROL CENTER</span><h2>Round controls</h2></div><Crown size={19} className="host-crown" /></div><div className="host-actions"><button onClick={() => runAction("start_meeting", { reason: "Host initiated" })}><MessageCircle size={16} /> Start meeting</button><button onClick={() => runAction("end_game", { winner_team: "Crew" })}><Trophy size={16} /> End · Crew wins</button><button onClick={() => runAction("end_game", { winner_team: "Impostor" })}><Swords size={16} /> End · Impostors win</button></div></Panel>}
-                      {sortedEvents.length > 0 && <Panel className="event-feed"><div className="panel-head"><div><span className="eyebrow">GAME ACTIVITY</span><h2>Latest events</h2></div><History size={17} /></div>{sortedEvents.slice(-5).map(ev => <div className="event-row" key={ev.id}><span className="event-dot" /><span>{ev.message}</span><small>{new Date(ev.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></div>)}</Panel>}
+                      {game.phase === "active" && events.find(ev => ev.event_type === "vote_result") && (() => {
+                        const lastResult = events.find(ev => ev.event_type === "vote_result")!;
+                        const counts = (lastResult.payload?.counts || {}) as Record<string, number>;
+                        return <Panel className="vote-result-panel"><div className="panel-head"><div><span className="eyebrow">MEETING RESULT</span><h2>{lastResult.message}</h2></div><Vote size={18} /></div>{Object.entries(counts).sort((a,b) => b[1] - a[1]).map(([target,count]) => <div className="vote-tally-row" key={target}><span>{target === "skip" ? "Skipped" : players.find(p => p.user_id === target)?.player_name || "Player"}</span><strong>{count} vote{count === 1 ? "" : "s"}</strong></div>)}</Panel>;
+                      })()}{sortedEvents.length > 0 && <Panel className="event-feed"><div className="panel-head"><div><span className="eyebrow">GAME ACTIVITY</span><h2>Latest events</h2></div><History size={17} /></div>{sortedEvents.slice(-5).map(ev => <div className="event-row" key={ev.id}><span className="event-dot" /><span>{ev.message}</span><small>{new Date(ev.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</small></div>)}</Panel>}
                     </>
                   )}
                 </section>
