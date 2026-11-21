@@ -565,7 +565,7 @@ export default function App() {
         </>
 
         {error && <div className="toast toast-error"><AlertCircle size={16} />{error}<button onClick={() => setError("")}>×</button></div>}
-        {notice && <div className="toast"><CheckCircle2 size={16} />{notice}</motion.div>}
+        {notice && <div className="toast"><CheckCircle2 size={16} />{notice}</div>}
       </main>
 
       {profile && !game && <nav className="bottom-nav"><button className={screen === "home" ? "nav-active" : ""} onClick={() => setScreen("home")}><Home size={18} /><span>Home</span></button><button className={screen === "shop" ? "nav-active" : ""} onClick={() => setScreen("shop")}><ShoppingBag size={18} /><span>Shop</span></button><button className={screen === "profile" ? "nav-active" : ""} onClick={() => setScreen("profile")}><Award size={18} /><span>Profile</span></button><button className={screen === "history" ? "nav-active" : ""} onClick={() => setScreen("history")}><History size={18} /><span>History</span></button></nav>}
