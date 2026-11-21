@@ -486,7 +486,7 @@ Deno.serve(async (request: Request) => {
         submitted_at: new Date().toISOString(),
       }, { onConflict: "game_id,meeting_number,voter_id" });
       if (error) throw error;
-      const { count } = await admin.from("game_votes").select("voter_id", { count: "exact", head: true }).eq("game_id", gameId).eq("meeting_number", game.meeting_number);
+      const { count } = await admin.from("game_votes").select("voter_id", { count: "exact", head: true }).eq("game_id", gameId).eq("meeting_number", game.meeting_number).eq("locked", true);
       const { count: total } = await admin.from("game_players").select("user_id", { count: "exact", head: true }).eq("game_id", gameId).eq("is_alive", true);
       await addEvent(gameId, "vote_progress", "A vote was submitted.", { submitted: count || 0, total: total || 0 });
       return reply({ ok: true, submitted: count || 0, total: total || 0 });
@@ -503,7 +503,12 @@ Deno.serve(async (request: Request) => {
     if (action === "resolve_vote") {
       const game = await requireHost(gameId, userId);
       if (game.phase !== "voting") return fail("Voting is not active.", 409);
-      const { data: votes, error } = await admin.from("game_votes").select("target_id").eq("game_id", gameId).eq("meeting_number", game.meeting_number);
+      const { data: claimed, error: claimError } = await admin.from("games")
+        .update({ phase: "active", phase_ends_at: null, meeting_reason: null })
+        .eq("id", gameId).eq("phase", "voting").select("id").maybeSingle();
+      if (claimError) throw claimError;
+      if (!claimed) return fail("Voting has already been resolved.", 409);
+      const { data: votes, error } = await admin.from("game_votes").select("target_id").eq("game_id", gameId).eq("meeting_number", game.meeting_number).eq("locked", true);
       if (error) throw error;
       const counts = new Map<string, number>();
       for (const vote of votes || []) counts.set(vote.target_id, (counts.get(vote.target_id) || 0) + 1);
@@ -526,7 +531,6 @@ Deno.serve(async (request: Request) => {
       const label = ejectedPlayer?.player_name ? ejectedPlayer.player_name + " was ejected." : "No one was ejected.";
       const revealCounts = Object.fromEntries(counts.entries());
       await addEvent(gameId, "vote_result", label, { counts: revealCounts, ejected_user_id: ejected });
-      await admin.from("games").update({ phase: "active", phase_ends_at: null, meeting_reason: null }).eq("id", gameId);
       await checkForWinner(gameId);
       return reply({ ok: true, ejected, message: label, player_count: profiles?.length || 0 });
     }
