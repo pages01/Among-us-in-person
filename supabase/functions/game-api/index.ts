@@ -463,33 +463,19 @@ Deno.serve(async (request: Request) => {
     }
 
     if (action === "cast_vote") {
-      const game = await requireGame(gameId);
-      if (game.phase !== "voting") return fail("Voting is closed.", 409);
-      const player = await requirePlayer(gameId, userId);
-      if (!player.is_alive) return fail("Eliminated players cannot vote.");
       const targetId = String(body.target_id || "");
-      if (targetId === "skip") {
-        if (game.settings.allowSkip === false) return fail("Skipping is disabled for this game.");
-      } else {
-        if (!targetId || targetId === userId) return fail("Choose another living player or skip.");
-        const { data: target } = await admin.from("game_players").select("user_id,is_alive").eq("game_id", gameId).eq("user_id", targetId).maybeSingle();
-        if (!target || !target.is_alive) return fail("That player cannot receive a vote.");
-      }
-      const { data: previous } = await admin.from("game_votes").select("locked").eq("game_id", gameId).eq("meeting_number", game.meeting_number).eq("voter_id", userId).maybeSingle();
-      if (previous?.locked) return fail("Your vote is already locked.", 409);
-      const { error } = await admin.from("game_votes").upsert({
-        game_id: gameId,
-        meeting_number: game.meeting_number,
-        voter_id: userId,
-        target_id: targetId,
-        locked: body.locked === true,
-        submitted_at: new Date().toISOString(),
-      }, { onConflict: "game_id,meeting_number,voter_id" });
+      const { data: voteResult, error } = await admin.rpc("record_game_vote", {
+        target_game: gameId,
+        target_user: userId,
+        target_player: targetId,
+        lock_vote: body.locked === true,
+      });
       if (error) throw error;
-      const { count } = await admin.from("game_votes").select("voter_id", { count: "exact", head: true }).eq("game_id", gameId).eq("meeting_number", game.meeting_number).eq("locked", true);
-      const { count: total } = await admin.from("game_players").select("user_id", { count: "exact", head: true }).eq("game_id", gameId).eq("is_alive", true);
-      await addEvent(gameId, "vote_progress", "A vote was submitted.", { submitted: count || 0, total: total || 0 });
-      return reply({ ok: true, submitted: count || 0, total: total || 0 });
+      await addEvent(gameId, "vote_progress", "A vote was submitted.", {
+        submitted: Number(voteResult?.submitted || 0),
+        total: Number(voteResult?.total || 0),
+      });
+      return reply(voteResult as Record<string, unknown>);
     }
 
     if (action === "vote_status") {
