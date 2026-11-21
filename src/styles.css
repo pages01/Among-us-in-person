@@ -373,3 +373,9 @@ p { color: var(--muted); line-height: 1.62; }
 .vote-result-panel { margin-top: 14px; padding: 18px; }
 .vote-tally-row { display: flex; align-items: center; justify-content: space-between; min-height: 34px; border-top: 1px solid rgba(220,231,255,.06); color: #aebbd0; font-size: 10px; }
 .vote-tally-row strong { color: #e2ecfa; font-variant-numeric: tabular-nums; }
+
+
+/* Lightweight native transitions keep the game smooth without an animation runtime dependency. */
+.screen-transition, .entry-screen, .toast { animation: among-fade-up 220ms ease-out both; }
+@keyframes among-fade-up { from { opacity: 0; transform: translate3d(0, 10px, 0); } to { opacity: 1; transform: translate3d(0, 0, 0); } }
+@media (prefers-reduced-motion: reduce) { .screen-transition, .entry-screen, .toast { animation: none; } }
