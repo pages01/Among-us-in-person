@@ -1,4 +1,4 @@
-name: Build and Deploy AMONG: IRL
+name: "Build and Deploy AMONG: IRL"
 
 on:
   push:
