@@ -246,7 +246,7 @@ declare
   v_task_index integer;
   v_reward integer;
 begin
-  select * into v_game from public.games where id = target_game;
+  select * into v_game from public.games where id = target_game for update;
   if not found or v_game.status <> 'active' or v_game.phase <> 'active' then
     raise exception 'Tasks can only be completed during an active round.';
   end if;
@@ -350,3 +350,82 @@ revoke all on function public.complete_task_and_reward(uuid, uuid, uuid) from pu
 revoke all on function public.purchase_cosmetic(uuid, text) from public, anon, authenticated;
 grant execute on function public.complete_task_and_reward(uuid, uuid, uuid) to service_role;
 grant execute on function public.purchase_cosmetic(uuid, text) to service_role;
+
+
+-- Serializes vote submission against vote resolution, preventing late or duplicate votes.
+create or replace function public.record_game_vote(
+  target_game uuid,
+  target_user uuid,
+  target_player text,
+  lock_vote boolean default true
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_game public.games%rowtype;
+  v_player public.game_players%rowtype;
+  v_target public.game_players%rowtype;
+  v_saved_voter uuid;
+  v_submitted integer;
+  v_total integer;
+begin
+  select * into v_game from public.games where id = target_game for update;
+  if not found or v_game.status <> 'active' or v_game.phase <> 'voting' then
+    raise exception 'Voting is closed.';
+  end if;
+
+  select * into v_player
+  from public.game_players
+  where game_id = target_game and user_id = target_user
+  for update;
+  if not found or not v_player.is_alive then
+    raise exception 'Only living players can vote.';
+  end if;
+
+  if target_player = 'skip' then
+    if v_game.settings->>'allowSkip' = 'false' then
+      raise exception 'Skipping is disabled for this game.';
+    end if;
+  else
+    if target_player = target_user::text then
+      raise exception 'You cannot vote for yourself.';
+    end if;
+    select * into v_target
+    from public.game_players
+    where game_id = target_game and user_id = target_player::uuid and is_alive = true;
+    if not found then
+      raise exception 'That player cannot receive a vote.';
+    end if;
+  end if;
+
+  insert into public.game_votes (game_id, meeting_number, voter_id, target_id, locked, submitted_at)
+  values (target_game, v_game.meeting_number, target_user, target_player, lock_vote, now())
+  on conflict (game_id, meeting_number, voter_id)
+  do update set
+    target_id = excluded.target_id,
+    locked = excluded.locked,
+    submitted_at = now()
+  where public.game_votes.locked = false
+  returning voter_id into v_saved_voter;
+
+  if v_saved_voter is null then
+    raise exception 'Your vote is already locked.';
+  end if;
+
+  select count(*) into v_submitted
+  from public.game_votes
+  where game_id = target_game and meeting_number = v_game.meeting_number and locked = true;
+
+  select count(*) into v_total
+  from public.game_players
+  where game_id = target_game and is_alive = true;
+
+  return jsonb_build_object('ok', true, 'submitted', v_submitted, 'total', v_total);
+end;
+$$;
+
+revoke all on function public.record_game_vote(uuid, uuid, text, boolean) from public, anon, authenticated;
+grant execute on function public.record_game_vote(uuid, uuid, text, boolean) to service_role;
