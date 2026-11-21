@@ -190,6 +190,15 @@ async function requirePlayer(gameId: string, userId: string) {
 async function finishGame(gameId: string, winner: "Crew" | "Impostor" | "Draw") {
   const game = await requireGame(gameId);
   if (game.status === "ended") return;
+  const { data: claimed, error: claimError } = await admin.from("games").update({
+    status: "ended",
+    phase: "ended",
+    winner_team: winner,
+    ended_at: new Date().toISOString(),
+    phase_ends_at: null,
+  }).eq("id", gameId).neq("status", "ended").select("id").maybeSingle();
+  if (claimError) throw claimError;
+  if (!claimed) return;
   const { data: players } = await admin.from("game_players").select("*").eq("game_id", gameId);
   const { data: secrets } = await admin.from("game_private_state").select("*").eq("game_id", gameId);
   const secretByUser = new Map((secrets || []).map((row) => [row.user_id, row]));
@@ -203,13 +212,6 @@ async function finishGame(gameId: string, winner: "Crew" | "Impostor" | "Draw") 
     alive: player.is_alive,
     role: secretByUser.get(player.user_id)?.role || "Crewmate",
   }));
-  await admin.from("games").update({
-    status: "ended",
-    phase: "ended",
-    winner_team: winner,
-    ended_at: new Date().toISOString(),
-    phase_ends_at: null,
-  }).eq("id", gameId);
   await admin.from("game_results").upsert({
     game_id: gameId,
     winner_team: winner,
@@ -342,6 +344,15 @@ Deno.serve(async (request: Request) => {
       return reply({ game_id: game.id, room_code: game.room_code });
     }
 
+    if (action === "leave_game") {
+      await requirePlayer(gameId, userId);
+      const { data: player } = await admin.from("game_players").select("player_name").eq("game_id", gameId).eq("user_id", userId).maybeSingle();
+      const { error } = await admin.from("game_players").update({ connected: false }).eq("game_id", gameId).eq("user_id", userId);
+      if (error) throw error;
+      await addEvent(gameId, "player_disconnected", (player?.player_name || "A player") + " left the room.", {});
+      return reply({ ok: true });
+    }
+
     if (action === "set_ready") {
       const game = await requireGame(gameId);
       if (game.status !== "lobby") return fail("The lobby is already closed.", 409);
@@ -405,24 +416,13 @@ Deno.serve(async (request: Request) => {
       if (game.status !== "active" || game.phase !== "active") return fail("Tasks can only be completed during an active round.", 409);
       const player = await requirePlayer(gameId, userId);
       if (!player.is_alive) return fail("Eliminated players cannot complete tasks.");
-      const { data: secret, error } = await admin.from("game_private_state").select("*").eq("game_id", gameId).eq("user_id", userId).maybeSingle();
-      if (error || !secret) return fail("Your private task list is not available.", 404);
-      if (secret.team !== "Crew") return fail("Impostors do not complete crew tasks.");
-      const tasks = Array.isArray(secret.tasks) ? secret.tasks as Array<Record<string, unknown>> : [];
-      const taskIndex = tasks.findIndex((task) => task.id === body.task_id);
-      if (taskIndex < 0) return fail("That task is not assigned to you.", 404);
-      if (tasks[taskIndex].completed === true) return fail("That task has already been completed.", 409);
-      tasks[taskIndex].completed = true;
-      tasks[taskIndex].completed_at = new Date().toISOString();
-      const { error: updateError } = await admin.from("game_private_state").update({ tasks }).eq("game_id", gameId).eq("user_id", userId);
-      if (updateError) throw updateError;
-      const reward = Number(tasks[taskIndex].points || 5);
-      const { data: profile } = await admin.from("profiles").select("points,tasks_completed").eq("id", userId).maybeSingle();
-      if (profile) await admin.from("profiles").update({
-        points: profile.points + reward,
-        tasks_completed: profile.tasks_completed + 1,
-        updated_at: new Date().toISOString(),
-      }).eq("id", userId);
+      const { data: rewardResult, error: rewardError } = await admin.rpc("complete_task_and_reward", {
+        target_game: gameId,
+        target_user: userId,
+        target_task: String(body.task_id || ""),
+      });
+      if (rewardError) throw rewardError;
+      const reward = Number(rewardResult?.reward || 0);
       const { data: me } = await admin.from("game_players").select("player_name").eq("game_id", gameId).eq("user_id", userId).single();
       await addEvent(gameId, "task_completed", me.player_name + " completed a task.", { reward });
       await checkForWinner(gameId);
@@ -551,17 +551,12 @@ Deno.serve(async (request: Request) => {
       const cosmeticId = String(body.cosmetic_id || "");
       const price = COSMETICS[cosmeticId];
       if (price === undefined) return fail("That cosmetic is not available.");
-      const { data: profile } = await admin.from("profiles").select("points,owned_cosmetics").eq("id", userId).maybeSingle();
-      if (!profile) return fail("Player profile not found.", 404);
-      if ((profile.owned_cosmetics || []).includes(cosmeticId)) return fail("You already own this cosmetic.");
-      const { data: updated, error } = await admin.from("profiles").update({
-        points: profile.points - price,
-        owned_cosmetics: [...(profile.owned_cosmetics || []), cosmeticId],
-        updated_at: new Date().toISOString(),
-      }).eq("id", userId).gte("points", price).select("id").maybeSingle();
+      const { data, error } = await admin.rpc("purchase_cosmetic", {
+        target_user: userId,
+        target_cosmetic: cosmeticId,
+      });
       if (error) throw error;
-      if (!updated) return fail("You do not have enough points.", 409);
-      return reply({ ok: true });
+      return reply(data as Record<string, unknown>);
     }
 
     if (action === "equip_cosmetic") {
