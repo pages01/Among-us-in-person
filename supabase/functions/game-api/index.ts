@@ -341,7 +341,7 @@ Deno.serve(async (request: Request) => {
       } else {
         await admin.from("game_players").update({ connected: true }).eq("game_id", game.id).eq("user_id", userId);
       }
-      return reply({ game_id: game.id, room_code: game.room_code });
+      return reply({ game_id: game.id, room_code: game.room_code, status: game.status });
     }
 
     if (action === "leave_game") {
