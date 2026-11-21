@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle, ArrowLeft, ArrowRight, Award, Check, CheckCircle2, ChevronDown,
   CircleHelp, Clock3, Coins, Copy, Crown, Gamepad2, History, Home, LogOut,
@@ -392,9 +391,9 @@ export default function App() {
           </div>
         )}
 
-        <AnimatePresence mode="wait">
+        <>
           {!profile ? (
-            <motion.section key="entry" className="entry-screen" initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
+            <section className="entry-screen">
               <div className="hero-orbit">
                 <div className="orbit orbit-a" /><div className="orbit orbit-b" />
                 <CrewBadge color="#ff626b" size="lg" />
@@ -414,9 +413,9 @@ export default function App() {
               <div className="feature-strip">
                 <span><Users size={15} /> Real-time rooms</span><span><QrCode size={15} /> QR joining</span><span><Sparkles size={15} /> Unlockable suits</span>
               </div>
-            </motion.section>
+            </section>
           ) : (
-            <motion.div key={screen} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.22 }}>
+            <div className="screen-transition">
               {screen === "home" && (
                 <section className="dashboard">
                   <div className="welcome-row">
@@ -561,12 +560,12 @@ export default function App() {
                   <Panel className="history-panel"><div className="panel-head"><div><span className="eyebrow">SAVED TO YOUR PLAYER ACCOUNT</span><h2>Recent matches</h2></div><History size={18} /></div>{history.filter(item => item.games?.status === "ended").length === 0 ? <p className="empty-history">No completed matches yet. Your finished rounds will appear here.</p> : history.filter(item => item.games?.status === "ended").map(item => <div className="history-row" key={item.game_id}><div><strong>{item.games?.game_name || "Game night"}</strong><small>{item.games?.created_at ? new Date(item.games.created_at).toLocaleDateString() : "Saved match"} · {item.games?.meeting_number || 0} meetings</small></div><span className={"history-result " + (item.games?.winner_team === "Crew" ? "crew-win" : "impostor-win")}>{item.games?.winner_team || "Draw"} win</span></div>)}</Panel>
                 </section>
               )}
-            </motion.div>
+            </div>
           )}
-        </AnimatePresence>
+        </>
 
-        {error && <motion.div className="toast toast-error" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><AlertCircle size={16} />{error}<button onClick={() => setError("")}>×</button></motion.div>}
-        {notice && <motion.div className="toast" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}><CheckCircle2 size={16} />{notice}</motion.div>}
+        {error && <div className="toast toast-error"><AlertCircle size={16} />{error}<button onClick={() => setError("")}>×</button></div>}
+        {notice && <div className="toast"><CheckCircle2 size={16} />{notice}</motion.div>}
       </main>
 
       {profile && !game && <nav className="bottom-nav"><button className={screen === "home" ? "nav-active" : ""} onClick={() => setScreen("home")}><Home size={18} /><span>Home</span></button><button className={screen === "shop" ? "nav-active" : ""} onClick={() => setScreen("shop")}><ShoppingBag size={18} /><span>Shop</span></button><button className={screen === "profile" ? "nav-active" : ""} onClick={() => setScreen("profile")}><Award size={18} /><span>Profile</span></button><button className={screen === "history" ? "nav-active" : ""} onClick={() => setScreen("history")}><History size={18} /><span>History</span></button></nav>}
