@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertCircle, ArrowLeft, ArrowRight, Award, Check, CheckCircle2, ChevronDown,
@@ -31,6 +31,7 @@ const SKINS = [
 ];
 
 type Screen = "home" | "create" | "join" | "lobby" | "game" | "profile" | "shop" | "history";
+type HistoryItem = { game_id: string; games: { game_name: string; created_at: string; winner_team: string | null; status: string; meeting_number: number } | null };
 
 const DEFAULT_SETTINGS = {
   maxPlayers: 12,
@@ -76,6 +77,7 @@ export default function App() {
   const [secret, setSecret] = useState<PlayerSecret | null>(null);
   const [events, setEvents] = useState<GameEvent[]>([]);
   const [results, setResults] = useState<GameResult | null>(null);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [name, setName] = useState("");
   const [roomCode, setRoomCode] = useState(new URLSearchParams(window.location.search).get("room") || "");
   const [gameName, setGameName] = useState("Game night");
@@ -140,6 +142,12 @@ export default function App() {
     if (gameQuery.data?.phase === "voting") {
       const status = await gameAction<{ submitted: number; total: number }>("vote_status", { game_id: gameId });
       setVoteStatus(status);
+      const { data: ownVote } = await supabase.from("game_votes").select("target_id,locked").eq("game_id", gameId).eq("meeting_number", gameQuery.data.meeting_number).eq("voter_id", currentUser.id).maybeSingle();
+      setVoteTarget(ownVote?.target_id || "");
+      setVoteLocked(Boolean(ownVote?.locked));
+    } else {
+      setVoteTarget("");
+      setVoteLocked(false);
     }
     if (gameQuery.data?.phase === "ended") {
       const final = await gameAction<GameResult>("get_results", { game_id: gameId });
@@ -183,6 +191,17 @@ export default function App() {
       gameAction("resolve_vote", { game_id: game.id }).then(() => refreshGame(game.id)).catch((e) => setError(messageOf(e)));
     }
   }, [remaining, isHost, game, refreshGame]);
+
+  async function loadHistory() {
+    if (!supabase || !profile) return;
+    const { data, error: historyError } = await supabase.from("game_players").select("game_id,games(game_name,created_at,winner_team,status,meeting_number)").eq("user_id", profile.id).order("joined_at", { ascending: false }).limit(25);
+    if (historyError) throw historyError;
+    setHistory((data || []) as unknown as HistoryItem[]);
+  }
+
+  useEffect(() => {
+    if (screen === "history" && profile) loadHistory().catch((e) => setError(messageOf(e)));
+  }, [screen, profile]);
 
   async function enterWithName() {
     if (!supabase) {
@@ -264,6 +283,7 @@ export default function App() {
     try {
       await gameAction(action, { game_id: game.id, ...payload });
       await refreshGame(game.id);
+      await loadProfile();
       if (success) notify(success);
     } catch (e) {
       setError(messageOf(e));
@@ -322,7 +342,10 @@ export default function App() {
     }
   }
 
-  function goHome() {
+  async function goHome() {
+    if (game?.id) {
+      try { await gameAction("leave_game", { game_id: game.id }); } catch { /* Keep local navigation available during a disconnect. */ }
+    }
     setGame(null);
     setPlayers([]);
     setSecret(null);
@@ -470,7 +493,7 @@ export default function App() {
                       <div className="result-glow"><Trophy size={42} /></div><div className="eyebrow">ROUND COMPLETE</div><h1>{game.winner_team === "Crew" ? "Crew wins." : game.winner_team === "Impostor" ? "Impostors win." : "Game over."}</h1><p>{game.winner_team === "Crew" ? "The crew found the impostor or completed the tasks." : "The impostors outsmarted the crew."}</p>
                       <Panel className="result-panel"><div className="panel-head"><div><span className="eyebrow">FINAL STANDINGS</span><h2>All players</h2></div><span className="settings-tag">{game.winner_team} victory</span></div>{(results?.standings || players.map(p => ({ user_id:p.user_id, player_name:p.player_name, role:"—", color:p.color, alive:p.is_alive }))).map((p) => <div className="crew-row result-row" key={p.user_id}><CrewBadge color={p.color} size="sm" /><div className="crew-name"><strong>{p.player_name}</strong><small>{p.role} · {p.alive ? "Survived" : "Eliminated"}</small></div>{p.user_id === userId && <span className="you-tag">YOU</span>}</div>)}</Panel>
                       <button className="primary-button full-button" onClick={goHome}>Back to home <ArrowRight size={17} /></button>
-                      {isHost && <button className="secondary-button full-button" onClick={() => runAction("rematch", {}, "New lobby created.")}>Rematch with same crew</button>}
+                      {isHost && <button className="secondary-button full-button" onClick={() => { setGame(null); setPlayers([]); setSecret(null); setResults(null); setScreen("create"); }}>Host another game <ArrowRight size={17} /></button>}
                     </div>
                   ) : (
                     <>
@@ -482,7 +505,7 @@ export default function App() {
                         <>
                           <div className="game-tabs"><button className={tab === "overview" ? "active" : ""} onClick={() => setTab("overview")}>Overview</button><button className={tab === "tasks" ? "active" : ""} onClick={() => setTab("tasks")}>My tasks <span>{doneTasks}/{taskList.length}</span></button><button className={tab === "players" ? "active" : ""} onClick={() => setTab("players")}>Players</button></div>
                           {tab === "overview" && <div className="overview-grid"><Panel className="progress-panel"><div className="panel-head"><div><span className="eyebrow">YOUR OBJECTIVES</span><h2>{doneTasks} of {taskList.length}</h2></div><span className="progress-ring"><CheckCircle2 size={19} /></span></div><div className="progress-track"><span style={{ width: (taskList.length ? doneTasks / taskList.length * 100 : 0) + "%" }} /></div><p>Complete your assigned tasks to help the crew secure a win.</p><button className="secondary-button full-button" onClick={() => setTab("tasks")}>View tasks <ArrowRight size={15} /></button></Panel><Panel className="live-panel"><div className="panel-head"><div><span className="eyebrow">YOUR STATUS</span><h2>{me?.is_alive ? "Alive" : "Out"}</h2></div><CrewBadge color={me?.color || "#ff626b"} size="md" /></div><p>{me?.is_alive ? "Stay alert. Watch what happens around you." : "You're out for this round. Follow the host's dead-player rules."}</p><div className="tiny-stat"><Users size={14} /> {players.filter(p => p.is_alive).length} players remain</div></Panel></div>}
-                          {tab === "tasks" && <Panel className="tasks-panel"><div className="panel-head"><div><span className="eyebrow">PERSONAL TASK LIST</span><h2>Things to do</h2></div><span className="settings-tag">{doneTasks}/{taskList.length} DONE</span></div>{taskList.map((task) => <div className={"task-row " + (task.completed ? "task-done" : "")} key={task.id}><span className="task-check">{task.completed ? <Check size={16} /> : <Zap size={15} />}</span><div className="task-copy"><strong>{task.title}</strong><small>{task.category} · {task.difficulty} · +{task.points} pts</small><p>{task.instructions}</p></div>{!task.completed && me?.is_alive && <button className="task-complete" onClick={() => runAction("complete_task", { task_id: task.id }, "Task completed. Points added.")} disabled={busy}>Complete</button>}</div>)}</Panel>}
+                          {tab === "tasks" && <Panel className="tasks-panel"><div className="panel-head"><div><span className="eyebrow">PERSONAL TASK LIST</span><h2>{secret?.team === "Impostor" ? "Stay undercover" : "Things to do"}</h2></div><span className="settings-tag">{doneTasks}/{taskList.length} DONE</span></div>{secret?.team === "Impostor" && <p className="impostor-hint">You are not completing crew tasks. Blend in, observe, and avoid drawing attention.</p>}{secret?.team === "Crew" && taskList.map((task) => <div className={"task-row " + (task.completed ? "task-done" : "")} key={task.id}><span className="task-check">{task.completed ? <Check size={16} /> : <Zap size={15} />}</span><div className="task-copy"><strong>{task.title}</strong><small>{task.category} · {task.difficulty} · +{task.points} pts</small><p>{task.instructions}</p></div>{!task.completed && me?.is_alive && secret?.team === "Crew" && <button className="task-complete" onClick={() => runAction("complete_task", { task_id: task.id }, "Task completed. Points added.")} disabled={busy}>Complete</button>}</div>)}</Panel>}
                           {tab === "players" && <Panel className="players-panel"><div className="panel-head"><div><span className="eyebrow">IN THIS ROUND</span><h2>Players</h2></div><span className="settings-tag">{players.length} TOTAL</span></div>{players.map(p => <div className={"crew-row " + (!p.is_alive ? "muted-row" : "")} key={p.id}><CrewBadge color={p.color} size="sm" /><div className="crew-name"><strong>{p.player_name}{p.user_id === userId ? " (you)" : ""}</strong><small>{p.is_alive ? "Alive" : "Eliminated"}</small></div>{p.is_host && <Crown size={15} className="host-crown" />}</div>)}</Panel>}
                           <button className="emergency-button" onClick={() => runAction("start_meeting", { reason: "Emergency meeting" }, "Meeting called.")} disabled={busy || !me?.is_alive}><MessageCircle size={18} /> Call an emergency meeting</button>
                         </>
@@ -522,7 +545,7 @@ export default function App() {
                 <section className="narrow-screen">
                   <button className="back-button" onClick={() => setScreen("home")}><ArrowLeft size={16} /> Back</button>
                   <div className="eyebrow">YOUR MATCH RECORD</div><h1>Game<br /><span>history.</span></h1>
-                  <Panel className="tip-card"><History size={19} /><div><strong>Match history is on its way</strong><p>Your player account already stores match totals and achievements. A full per-match timeline will be added in a later update.</p></div></Panel>
+                  <Panel className="history-panel"><div className="panel-head"><div><span className="eyebrow">SAVED TO YOUR PLAYER ACCOUNT</span><h2>Recent matches</h2></div><History size={18} /></div>{history.filter(item => item.games?.status === "ended").length === 0 ? <p className="empty-history">No completed matches yet. Your finished rounds will appear here.</p> : history.filter(item => item.games?.status === "ended").map(item => <div className="history-row" key={item.game_id}><div><strong>{item.games?.game_name || "Game night"}</strong><small>{item.games?.created_at ? new Date(item.games.created_at).toLocaleDateString() : "Saved match"} · {item.games?.meeting_number || 0} meetings</small></div><span className={"history-result " + (item.games?.winner_team === "Crew" ? "crew-win" : "impostor-win")}>{item.games?.winner_team || "Draw"} win</span></div>))}</Panel>
                 </section>
               )}
             </motion.div>
