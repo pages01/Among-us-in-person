@@ -495,7 +495,7 @@ Deno.serve(async (request: Request) => {
     if (action === "vote_status") {
       await requirePlayer(gameId, userId);
       const game = await requireGame(gameId);
-      const { count: submitted } = await admin.from("game_votes").select("voter_id", { count: "exact", head: true }).eq("game_id", gameId).eq("meeting_number", game.meeting_number);
+      const { count: submitted } = await admin.from("game_votes").select("voter_id", { count: "exact", head: true }).eq("game_id", gameId).eq("meeting_number", game.meeting_number).eq("locked", true);
       const { count: total } = await admin.from("game_players").select("user_id", { count: "exact", head: true }).eq("game_id", gameId).eq("is_alive", true);
       return reply({ submitted: submitted || 0, total: total || 0 });
     }
